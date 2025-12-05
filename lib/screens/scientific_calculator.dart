@@ -17,7 +17,6 @@ class MyApp extends StatelessWidget {
         brightness: Brightness.dark,
         primarySwatch: Colors.indigo,
         scaffoldBackgroundColor: Colors.black,
-        // 💥 FIX 1: Changed ElevatedButtonData to ElevatedButtonThemeData 💥
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFF333333),
@@ -61,67 +60,35 @@ class _ScientificCalculatorState extends State<ScientificCalculator> {
     }
   }
 
-  String _fixPower(String expr) {
-    while (expr.contains("^")) {
-      int i = expr.indexOf("^");
-
-      // Find the Base (left side of ^)
-      int l = i - 1;
-      if (expr[l] == ')') {
-        int count = 1;
-        l--;
-        while (l >= 0 && count > 0) {
-          if (expr[l] == ')') count++;
-          if (expr[l] == '(') count--;
-          l--;
-        }
-        l++;
-      } else {
-        while (l >= 0 && RegExp(r"[0-9a-zA-Z\._]").hasMatch(expr[l])) {
-          l--;
-        }
-        l++;
-      }
-      String base = expr.substring(l, i);
-
-      int r = i + 1;
-      if (expr[r] == '(') {
-        int count = 1;
-        r++;
-        while (r < expr.length && count > 0) {
-          if (expr[r] == '(') count++;
-          if (expr[r] == ')') count--;
-          r++;
-        }
-      } else {
-        // FIX: Ensure r correctly captures the exponent until a non-match or end of string.
-        int end = expr.length;
-        while (r < end && RegExp(r"[0-9a-zA-Z\._]").hasMatch(expr[r])) {
-          r++;
-        }
-      }
-      String exp = expr.substring(i + 1, r);
-
-      // Replace with pow(base, exp)
-      expr = expr.substring(0, l) + "pow($base,$exp)" + expr.substring(r);
-    }
-
-    return expr;
+  // --- HELPER: Factorial Logic (Simple Version) ---
+  int _factorial(int n) {
+    if (n < 0) return 0;
+    if (n == 0 || n == 1) return 1;
+    return n * _factorial(n - 1);
   }
 
+  // --- PREPROCESSOR (Simplified) ---
   String _preprocessForParser(String s) {
+    // 1. Basic replacements
     String res = s.replaceAll(' ', '');
     res = res.replaceAll('√', 'sqrt');
     res = res.replaceAllMapped(RegExp(r'ln\('), (m) => 'log(');
 
-    res = _transformLog10(res);
-    res = _fixPower(res); // All power logic is handled here
+    // 2. Handle Factorial (!)
+    res = res.replaceAllMapped(RegExp(r'(\d+)!'), (m) {
+      int val = int.parse(m[1]!);
+      return _factorial(val).toString();
+    });
 
+    // 3. Handle Log10 (Base 10)
+    res = _transformLog10(res);
+
+    // 4. Handle Degrees/Radians
+    // Note: We DO NOT touch the '^' symbol. The parser handles it natively.
     if (degreesMode) {
       res = res.replaceAllMapped(RegExp(r'(sin|cos|tan)\(([^)]+)\)'), (m) {
         return '${m[1]!}((pi/180)*(${m[2]!}))';
       });
-
       res = res.replaceAllMapped(RegExp(r'a(sin|cos|tan)\(([^)]+)\)'), (m) {
         return '(180/pi)*arc${m[1]!}(${m[2]!})';
       });
@@ -130,7 +97,6 @@ class _ScientificCalculatorState extends State<ScientificCalculator> {
       res = res.replaceAll('acos', 'arccos');
       res = res.replaceAll('atan', 'arctan');
     }
-
     return res;
   }
 
@@ -138,13 +104,11 @@ class _ScientificCalculatorState extends State<ScientificCalculator> {
     String res = s;
     const pattern = 'log10(';
     int idx = res.indexOf(pattern);
-
     while (idx != -1) {
       int start = idx + pattern.length;
       int end = start;
       int parenCount = 0;
       int depth = 1;
-
       while (end < res.length) {
         if (res[end] == '(') parenCount++;
         else if (res[end] == ')') {
@@ -156,16 +120,12 @@ class _ScientificCalculatorState extends State<ScientificCalculator> {
         }
         end++;
       }
-
       if (depth != 0) break;
-
       String inside = res.substring(start, end);
       String replace = '(log($inside)/log(10))';
-
       res = res.substring(0, idx) + replace + res.substring(end + 1);
       idx = res.indexOf(pattern);
     }
-
     return res;
   }
 
@@ -174,21 +134,18 @@ class _ScientificCalculatorState extends State<ScientificCalculator> {
       setState(() => output = "");
       return;
     }
-
     try {
       String expr = _preprocessForParser(input);
       Parser p = Parser();
       Expression parsed = p.parse(expr);
-
       ContextModel cm = ContextModel();
       cm.bindVariable(Variable('pi'), Number(math.pi));
       cm.bindVariable(Variable('e'), Number(math.e));
 
       double eval = parsed.evaluate(EvaluationType.REAL, cm).toDouble();
-
       setState(() => output = eval.toStringAsPrecision(10));
     } catch (e) {
-      setState(() => output = "Error: Invalid Expression");
+      setState(() => output = "Error");
     }
   }
 
@@ -206,17 +163,15 @@ class _ScientificCalculatorState extends State<ScientificCalculator> {
     if (value == 'log') return _append('log10(');
     if (value == '√') return _append('√(');
 
-    // x² (appends ^2)
+    // --- EXPONENT SIMPLIFICATION ---
+    // Just append the symbol. The parser does the math.
     if (value == 'x²') return _append('^2');
-
-    // x³ (appends ^3)
     if (value == 'x³') return _append('^3');
-
-    // y^x (appends ^)
     if (value == 'y^x') return _append("^");
 
     if (value == 'π') return _append('pi');
     if (value == 'e') return _append('e');
+    if (value == 'x!') return _append('!');
 
     if (value == 'ANS') return _append(output);
     if (value == 'Rad/Deg') return setState(() => degreesMode = !degreesMode);
@@ -269,14 +224,14 @@ class _ScientificCalculatorState extends State<ScientificCalculator> {
       {'label': 'DEL', 'value': 'DEL'}, {'label': 'AC', 'value': 'AC'},
       {'label': '7', 'value': '7'}, {'label': '8', 'value': '8'},
       {'label': '9', 'value': '9'}, {'label': '÷', 'value': '/'},
-      {'label': '+/-', 'value': '+/-'}, {'label': '%', 'value': '%'},
+      {'label': 'x!', 'value': 'x!'}, {'label': '%', 'value': '%'},
       {'label': '4', 'value': '4'}, {'label': '5', 'value': '5'},
       {'label': '6', 'value': '6'}, {'label': '×', 'value': '*'},
-      {'label': 'ANS', 'value': 'ANS'}, {'label': '0', 'value': '0'},
+      {'label': '-', 'value': '-'}, {'label': '+', 'value': '+'},
       {'label': '1', 'value': '1'}, {'label': '2', 'value': '2'},
-      {'label': '3', 'value': '3'}, {'label': '-', 'value': '-'},
-      {'label': '+', 'value': '+'}, {'label': '.', 'value': '.'},
-      {'label': '=','value': '='},
+      {'label': '3', 'value': '3'}, {'label': 'ANS', 'value': 'ANS'},
+      {'label': '.', 'value': '.'}, {'label': '0', 'value': '0'},
+      {'label': '=', 'value': '='},
     ];
 
     return Scaffold(
@@ -334,28 +289,23 @@ class _ScientificCalculatorState extends State<ScientificCalculator> {
                     Color buttonColor;
                     Color textColor = Colors.white;
 
-                    if (['AC', 'DEL', '+/-', '%', 'Rad/Deg', '2ⁿᵈ', 'mc', 'm+', 'm-', 'mr']
+                    if (['AC', 'DEL', '+/-', '%', 'Rad/Deg', '2ⁿᵈ', 'mc', 'm+', 'm-', 'mr', 'x!']
                         .contains(item['value'])) {
                       buttonColor = darkGrey;
                     } else if (['/', '*', '-', '+', '='].contains(item['value'])) {
                       buttonColor = orange;
-                    } else if ([
-                      '7', '8', '9', '4', '5', '6', '1', '2', '3', '0', '.'
-                    ].contains(item['value'])) {
+                    } else if (['7', '8', '9', '4', '5', '6', '1', '2', '3', '0', '.'].contains(item['value'])) {
                       buttonColor = black;
                     } else {
                       buttonColor = darkGrey;
                     }
 
-                    if (item['label'] == 'AC' ||
-                        item['value'] == 'DEL' ||
-                        item['value'] == '+/-' ||
-                        item['value'] == '%') {
+                    if (item['label'] == 'AC' || item['value'] == 'DEL' || item['value'] == '+/-' || item['value'] == '%') {
                       textColor = Colors.black;
                     }
 
                     return buildGridButton(
-                        item['label']!, item['value']!, buttonColor, textColor);
+                        item['label'] ?? '?', item['value'] ?? '', buttonColor, textColor);
                   },
                 ),
               ),
